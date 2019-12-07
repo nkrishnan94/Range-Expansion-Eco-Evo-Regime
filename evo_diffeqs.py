@@ -50,29 +50,37 @@ def sFisher_1max(b,R_space,dt,mu,s,r,K,D):
         ##noise as a Moran process: sqrt(Db(1-b)) where D = 2/NT_g where T_g is generation time or 1/r
         dbidt.append((((2*r*(a**i)*bi*[max(0,j) for j in (1-btot)])/K*(r)**.5)**.5) * np.random.normal(0,1,len(bi))) 
         #dbidt.append( (b[0]*mu) *(2*(i==1)-1)) ##mutation 
-        dbidt.append(b[0]*mu*(2*(i==1)-1)) ##mutation 
+        #dbidt.append(b[0]*mu*(2*(i==1)-1)) ##mutation 
+        dbidt.append(np.random.poisson(b[0]*mu)*(2*(i==1)-1)) ##mutation 
         #dbidt.append((1/K)*np.random.poisson(b[0]*mu*dt)*(2*(i==1)-1)) ##mutation 
         dbdt.append(np.sum(dbidt,axis=0).tolist())##change in  allale population due to diffusion, growth, genetic, drift, and mutation
+        
     return np.array(dbdt)
 
 
 
-def sFisher(b,dx,mu,s,r,K,D):
+def sFisher(b,R_space,mu,s,r,K,D):
+    a = 1+s
     dbdt=[]
     ## chane in mutation from previous allele to current allel, beings at 0
-    dbmu_ = 0
+    dbmu_ = np.zeros(len(b[0]))
     ## iterate through each allele "i"
     for i in range(len(b)):
         bi = np.array(b[i])
         btot = np.sum(b,axis=0) #total population density w.r.t. x 
+        dbidt = []
         ##Stochastic fisher equation
-        dbidt= []
-        dbidt.append(D*grad(grad(bi,dx),dx))
-        dbidt.append(((1+s)**i) * bi*(1-btot))
-        dbidt.append((((2*r*bi*[max(0,j) for j in (1-btot)])/K)**.5) * np.random.normal(0,1,len(bi)))
-        dbidt.append(-bi*mu) #beneficial mutation rate, "out" of current allele
-        dbdt.append((np.sum(dbidt,axis=0)+np.array(dbmu_)).tolist())##change in  allale population due to diffusion, growth, genetic, drift, and mutation
-        dbmu_ = bi*mu #"int to next allele" of current allele
+        #dbidt = D*grad(grad(bi,dx),dx) + ((a)**i) * bi*(1-btot) +(((2*r*bi*[max(0,j) for j in (1-btot)])/K)**.5) * np.random.normal(0,1,len(bi))
+        dbidt.append(D*grad(grad(bi,np.diff(R_space)[0]),np.diff(R_space)[0]))
+        dbidt.append(((a)**i) * bi*(1-btot))
+        
+        dbidt.append((((2*r*(a**i)*bi*[max(0,j) for j in (1-btot)])/K*(r)**.5)**.5) * np.random.normal(0,1,len(bi))) 
+        dbmu = - np.random.poisson(bi*mu)
+        dbidt.append(dbmu) #beneficial mutation rate, "out" of current allele
+        dbidt.append(dbmu_)
+        dbdt.append(np.sum(dbidt,axis=0).tolist())
+        #dbdt.append(dbidt+dbmu+dbmu_)##change in  allale population due to diffusion, growth, genetic, drift, and mutation
+        dbmu_ = -dbmu #"int to next allele" of current allele
     dbdt.append(dbmu_) ## mutation into next allele, for which population density vector doesnt exist yet
     return np.array(dbdt)
 
