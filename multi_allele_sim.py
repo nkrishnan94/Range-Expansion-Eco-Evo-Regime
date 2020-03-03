@@ -5,9 +5,9 @@ import numpy as np
 import datetime
 
 start = datetime.datetime.now()
-K_space = np.array([100,500])
-mu_space = np.array([.001,.005])
-alphas = np.array([3,5])
+K_space = np.array([100,450,800])
+mu_space = np.array([.0001,.0005,.001])
+alphas = np.array([1.5,2,5])
 
 reps= 5
 
@@ -18,8 +18,10 @@ r=.1
 results = []
 
 for rep, K,mu,a in tqdm(product(range(reps), K_space,mu_space, alphas)):
-    L = fix_time(K,10,r,a,mu,3/K,False)
-    results.append([L])
+    L,g = fix_time(K,r,a,mu,1/K,dist_key = 'normal')
+    tip = np.where(L[:,0]==K)[0][0]
+    clones =np.sum(L[:,1:]>0,axis=1)[:tip]
+    results.append([clones,g])
     
     
     
