@@ -1,10 +1,47 @@
 import numpy as np
 from numpy.random import choice
-
 import random
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint 
+from numba import jit,njit
+##standing wave solution of Fisher wave
 
-from scipy.integrate import odeint
 
+def standing_wave(y0,x,D,rw):
+    w = y0[0]      ##initial value for wave profile at x =0, i.e. w(x=0)
+    z = y0[1]      ##initial value for rate of change of profile w.r.t. position x , at x=0 i.e. dw/dx(x=0)
+    dwdx = z
+    dzdx =(-2*((rw*D)**.5)*dwdx -w*rw*(1-w))/D ## fisher equation in comoving frame
+    
+    return [dwdx,dzdx]
+
+
+def initialize(K,n_allele,mu):
+    ## generate standing wave
+    stand = odeint(standing_wave,[1,-(2*2**.5)/K],np.arange(70),args=(2*2**.5,1))[:,0]
+    
+    ## cuttoff non integer cell density based off of carry capacity K
+    w_0 = (K*stand).astype(int)
+    w_0 = w_0[w_0>1]
+    
+    ## subtract wild type cells from carrying capacity to get 'emopty' particle count
+    L = np.vstack(((K-w_0),w_0)).T
+    L = np.append(L,np.zeros((len(w_0),n_allele-1)),axis=1)
+
+    ##array strucutre of an empty deme to be added on as needed 
+    L_empty= np.append([K],np.zeros(n_allele,dtype=int))
+
+    ## add on some number of empty demes
+    for i in range(500):
+        L= np.append(L,[L_empty],axis=0)
+        
+    return L.astype(int), L_empty
+
+
+
+## given  ab array with counts and an array withprobabilities return index from first array
+# faster than np.random.choice for smallish arrays
+@njit
 def choice(options,probs):
     x = np.random.rand()
     cum = 0
@@ -16,265 +53,269 @@ def choice(options,probs):
     return options[i]
 
 
-##generate a standing wave solution of fisher equations - i.e. an 'established' wave front
-
-def standing_wave(y0,x,D,rw):
-    w = y0[0]      ##initial value for wave profile at x =0, i.e. w(x=0)
-    z = y0[1]      ##initial value for rate of change of profile w.r.t. position x , at x=0 i.e. dw/dx(x=0)
-    dwdx = z
-    dzdx =(-2*((rw*D)**.5)*dwdx -w*rw*(1-w))/D ## fisher equation in comoving frame
-    
-    return [dwdx,dzdx]
-
-### given a deme return that deme and a random neighbor
-
-def rand_neighbors(n_demes):
-    ind_1 = np.random.randint(n_demes)
-    if ind_1 == 0:
-        ind_2 =1
-    else:
-        if ind_1 == n_demes:
-            ind_2 = n_demes-1
-        else:
-            if np.random.randn()>.5 and ind_1 !=0:
-                ind_2 = ind_1-1
-            else:
-                ind_2 = ind_1+1
-    return np.array([ind_1,ind_2])
-
-
-
-def fit_dist(r,alpha,dist_key):
-    dist_dict = {'exponential':np.random.exponential,
-                 'gamma':np.random.gamma,
-                 'normal':np.random.normal}
-    func = dist_dict[dist_key]
-    if func ==np.random.normal:
-        s_bar  = r*func(alpha,.01)
-    else:
-        s_bar  = r*func(alpha)
-    return s_bar
-
-
-
-
-## covert a list of cell counts for each particle type to an array of 
-#all particles represented with their type represented by an itenged
-def counts_to_cells(counts,n_allele):
-    cells = np.unique(cells,return_counts=True)
-    return cells
-
-## covert an array of all cells and their type to a list of counts for each cell type 
-def cells_to_counts(cell_types,g_rates):
-    g_r = np.unique(cell_types,return_counts=True)[0]
-    raw_counts = np.unique(cell_types,return_counts=True)[1]
-    cell_counts = []
-    
-    for i in g_rates:
-        if any(g_r == i):
-            cell_counts.append(raw_counts[np.where(g_r == i)[0][0]])
-        else:
-            cell_counts.append(0)
-    cell_counts = np.array(cell_counts)
-
-    return cell_counts
-    
-    
-## from a list 2d array of the cell list from two neighboring demes
-##pick two cells to be swapped at random and return resulting cell list
-
-def migration(cell_counts,g_rates,K):
-    empty_cnt_1,empty_cnt_2 = np.zeros(len(g_rates)),np.zeros(len(g_rates))
-    try:
-     
-        chosen_1 = choice(g_rates, cell_counts[0]/K)
-        chosen_2 = choice(g_rates, cell_counts[1]/K)
-    except:
-        chosen_1 = choice(g_rates, cell_counts[0]/np.sum(cell_counts[0]))
-        chosen_2 = choice(g_rates, cell_counts[1]/np.sum(cell_counts[0]))
-    chosen_1 = np.where(chosen_1==g_rates)[0][0]
-    chosen_2 = np.where(chosen_2==g_rates)[0][0]
-    #print(np.where(chosen_1==g_rates))
-    empty_cnt_1[chosen_1] =1
-    empty_cnt_2[chosen_2] =1
-    cell_counts[0]=cell_counts[0]- empty_cnt_1 + empty_cnt_2
-    cell_counts[1]= cell_counts[1]+ empty_cnt_1 - empty_cnt_2
-    return cell_counts
-## from the cell list from the chosen d0eme
-##pick *-\\\\\\\\\\\\\\\
-#wo cells and replace one with a duplicate of the other according
-##to transition matrix
-
-def duplication(cell_counts,g_rates,K):
-    picks = []
-    for i in range(2):
-        try:
-            picks.append(choice(g_rates,
-                              cell_counts/K))
-        except:
-            picks.append(choice(g_rates,
-                              cell_counts/np.sum(cell_counts)))
-            
-
-    empty_cnt_1, empty_cnt_2 = np.zeros(len(g_rates)),np.zeros(len(g_rates))
-    picks[0] = np.where(picks[0]==g_rates)[0][0]
-    picks[1] = np.where(picks[1]==g_rates)[0][0]
-    empty_cnt_1[picks[0]] =1
-    empty_cnt_2[picks[1]] =1
-    r= np.random.random()
-    P=prob_mat(g_rates)
-    #print(cell_types)
-    if P[tuple(picks)]> r:
-        cell_counts = cell_counts + empty_cnt_1 - empty_cnt_2
-    return cell_counts
-
-
-    
- ## from the cell list from the chosen deme
-##pick a cell and mutate it with probability according to mutation rate
-
+@njit
+def stepping_stone_nonvec(n_gen,## nunmber of gnerations
+                K, ## population size
+                r,
+                alpha,## fitness landscape (Growthrates of each genotype (should be <<1))
+                mu,
+                L_init):  ## mutation rate
     
 
-def mutation(mu,alpha,dist_key, cell_counts,g_rates,K,r):
-
-    cell_types = np.repeat(g_rates,cell_counts.astype(int))
-    pick_ind=choice(np.arange(K), np.ones(K)/K)
-    p= np.random.random()
-    s_pos=0
-    if mu>p:
-        if cell_types[pick_ind] == r :
-            s_new = fit_dist(r,alpha,dist_key)
-            cell_types[pick_ind] = s_new
-            g_rates = np.sort(np.append(g_rates,[cell_types[pick_ind]]))
-            s_pos = np.where(g_rates==s_new)[0][0]
-    return cell_types, g_rates,s_pos
-
-## perform stepping stone alogrithm (migration, duplication, mutation) for each step
-## and return new simulation box, recenter
-
-def recenter(L, g_rates, K):
-    shift = 0
-    L_empty= np.append([K],np.zeros(len(g_rates)-1,dtype=float))
-    while L[0,0]<int(.02*K):
-        L=L[1:,:]
-        shift+=1
-    for i in range(shift):
-        L=np.append(L,[L_empty],axis=0)
-    return L
-
-
-def update(L,g_rates,dist_key,K,r,alpha,mu):
-    #demes = np.arange(len(L))
-    
-
-    #migration
-    n_demes =  np.where(L[:,0]!=K)[0][-1]+2
-    #migration
-    neighb = rand_neighbors(n_demes)
-
-    L[neighb]= migration(L[neighb],g_rates,K)
-
-
-    #duplication
-    dup_deme = np.random.randint(n_demes)
-    L[dup_deme] = duplication(L[dup_deme],g_rates,K)
-
-    ##mutation
-    mut_deme = np.random.randint(n_demes)
-    cells, g_rates,s_pos = mutation(mu,alpha,dist_key, L[mut_deme],g_rates,K,r)
-    counts = cells_to_counts(cells,g_rates)
-    for i in range(len(g_rates)-len(L[0])):
-        L = np.append(np.append(L[:,:(s_pos)],
-                                np.vstack(np.zeros(len(L))),axis=1),L[:,(s_pos):],axis=1)
-        #print(counts)
-        #print(L[mut_deme])
-        #print(L)
-    L[mut_deme]=counts
-        
-    return L,g_rates
-
-
-def initialize(K,r,alpha,mu):
-    stand = odeint(standing_wave,[1,-(2*2**.5)/K],np.arange(70),args=(2*2**.5,1))[:,0]
-    w_0 = (K*stand).astype(int)
-    w_0 = w_0[w_0>1]
-    L = np.vstack(((K-w_0),w_0)).T
-    g_rates = np.array([0,r])
-
-    ##initialize array
-    L_empty= np.append([K],np.zeros(len(g_rates)-1))
-
-    for i in range(70):
-        L= np.append(L,[L_empty],axis=0)
-    return L.astype(int), g_rates
-
-def prob_mat(g_rates):
-    P = np.ones((len(g_rates),len(g_rates)))
-    P[0,:] = 1-g_rates
-    return P 
-
-def prune(L,g_rates):
-    
-    full_bools = np.where(np.sum(L,axis=0)!=0)[0][-1]
-    L=L[:,:full_bools]
-    g_rates = g_rates[:full_bools]
-    return L,g_rates
-
-## run one dimensional stepping stone for a given number of possible beneficil mutations, and generations   
-def run_stepping_stone(n_gen,K,r,alpha,mu,dist_key = 'exponential'):
-    func_args = [K,r,alpha,mu]
     ##initialize probability matrix
-    c = 1
-    move=10
-    L, g_rates = initialize(*func_args)
-    L_history=[L]
-    #begin evolution
-    count = 0
+    #L = L_init
+    L_empty = L_init[-1]
+    L=L_init
+    g_rates = np.array([0,r])
+    n_allele = len(g_rates)-1
+    P = np.ones((n_allele+1,n_allele+1))
+    P[0,:] = 1 - g_rates
+    
+    ## list of allele number - pre-established so array doesnt have to be regenerated
+    alleles = np.arange(n_allele+1)
+    
+    #slots for picked alleles each iteration to be stored, so array doesnt havent to be regerated each time
+    picks = np.array([0,0,0,0])
+    
+    #sstore trace history
+    #L_history= np.expand_dims(L,0)
+
+    #for i in range(n_gen-1):
+    #    L_history = np.concatenate((L_history, np.expand_dims(np.zeros(L.shape),0)))
+    
+    delta_x = 0
     for t in range(n_gen):
         for dt in range(K):
-            L,g_rates = update(L,g_rates,dist_key,*func_args)
             
-            L= recenter(L,g_rates,K)
+            #number of demes with a non empty particle (+2)
+            n_demes = np.where(L[:,0]!=K)[0][-1] +2
+
+            #pick adjacent demes tobe swapped, pick demes for duplication and mutation
+            ind_1 = np.random.randint(0, n_demes)
+            if (np.random.random() < .5 and ind_1 != 0) or ind_1 == n_demes - 1:
+                ind_2 = ind_1 - 1
+            else:
+                ind_2 = ind_1 + 1
+            neighb = np.array([ind_1, ind_2])
+            dup_deme, mut_deme = np.random.randint(0,n_demes,2)
+
+
+            #dmigration: pick two cells from each of the selected demes, and swap them
+            for i in range(2):
+                picks[i] = choice(alleles, L[neighb][i]/K)
+                
+            for inds in [[0,1],[1,0]]:
+                L[neighb[inds[0]],picks[inds[0]]] -= 1
+                L[neighb[inds[0]],picks[inds[1]]] += 1
+
+
+            #duplication: pick two cells from the selected deme and echange first with copy of second according to
+            #3 probability matrix
+            for i in range(2,4):
+                picks[i] = choice(alleles,L[dup_deme]/K)
+
+            if P[picks[2],picks[3]] > np.random.random():
+                L[dup_deme,picks[2]] += 1
+                L[dup_deme,picks[3]] -= 1
+
+
+
+            ##mutation
+            mut_deme = np.random.randint(n_demes)
+            picks[4] = choice(alleles,L[mut_deme]/K)
+            #picks.append(choice(alleles,L[mut_deme]/K))
+            if mu>np.random.random() and ( picks[4]>0):
+                #3 only particles that are not empty spaces and are not the 'peak' in the landscape strucutre can mutate
+                #if picks[4] != n_allele and picks[4] != 0:
+                    ## mutate cell and fromat in terms of cell counts i.e. [empty cell count,...,chosen cell count]
+
+                ##remove original cell and add mutated cell to cell counts
+                #s_0 = g_rates[picks[4]]
+                s_new = np.random.normal(r*alpha**picks[4],.001)
+                g_rates = np.sort(np.append(g_rates,np.asarray(s_new)))
+                s_pos = np.where(g_rates==s_new)[0][0]
+                #print(s_pos)
+                L = np.concatenate((L[:,:(s_pos)].T, np.expand_dims(np.zeros(len(L),dtype=np.dtype( np.int64)),0), L[:,(s_pos):].T)).T
+                #L = np.concatenate((L[:,:(s_pos)].T,np.expand_dims(np.zeros(len(L)).astype(int),0),L[:,(s_pos):].T)).T 
+                
+
+                n_allele = len(g_rates)-1
+
+                P = np.ones((n_allele+1,n_allele+1))
+                
+                P[0,:] = 1 - g_rates
+                alleles = np.arange(n_allele+1)
+                L_empty = np.array([K]+[0]*n_allele)
+                L[mut_deme,picks[4]] -=1
+                L[mut_deme,s_pos] +=1
+                
+                
+        non_empty = np.sum(L,axis=0)!=0
+        L= L[:,non_empty]
+        L_empty = L_empty[non_empty]
+        g_rates = g_rates[non_empty]
+
+        ##track how many demes are to be omitted
+        shift = 0
+        while L[0,0]<1:
+            L=L[1:,:]
+            shift+=1
+
+        delta_x+=shift
+        #if L[0,0]<int(.02*K):
+        #    shift = np.where(L[:,0]<int(.02*K))[-1][0]
+        #    L = L[shift:,:]
+        for i in range(shift):
+            L=np.append(L,np.expand_dims(L_empty,0),axis=0)
+
+
+        #L_history = np.concatenate((L_history, np.expand_dims(L,0)),axis=0)
+        #L_history[t] = L
         
-        #L,g_rates =prune(L,g_rates)
-        L_history.append(L)
-        
-
-        count+=1
-    return L_history, g_rates
+    return L,g_rates,delta_x
 
 
-## run a two allele 1d stepping stone simulation, recording mutant establishment and fixation along simulation box
-def fix_time(K,r,alpha,mu,thresh,dist_key):
-    func_args = [K,r,alpha,mu]
+@njit
+def fix_time_spatial(K, ## population size
+                     r,
+                     alpha,## fitness landscape (Growthrates of each genotype (should be <<1))
+                     mu,
+                     L_init,
+                     thresh):  ## mutation rate
+    
+
     ##initialize probability matrix
-    c = 1
-    move=10
-    L, g_rates = initialize(*func_args)
-    L_history=[L]
-    #begin evolution
-    count = 0
-    #begin evolution
+    #L = L_init
+    L_empty = L_init[-1]
+    L=L_init
+    g_rates = np.array([0,r])
+    n_allele = len(g_rates)-1
+    P = np.ones((n_allele+1,n_allele+1))
+    P[0,:] = 1 - g_rates
+    
+    ## list of allele number - pre-established so array doesnt have to be regenerated
+    alleles = np.arange(n_allele+1)
+    
+    #slots for picked alleles each iteration to be stored, so array doesnt havent to be regerated each time
+    picks = np.array([0,0,0,0])
+    
+    #sstore trace history
+    #L_history= np.expand_dims(L,0)
+
+    #for i in range(n_gen-1):
+    #    L_history = np.concatenate((L_history, np.expand_dims(np.zeros(L.shape),0)))
+
     fixed=False
+    muts_check = False
+    del_check =False
+    del_fix = False
+    arise_time =0 
     t = 0
 
-    fix_times = np.zeros(len(L))
-    est_times = np.zeros(len(L))
-    fb_1, eb_1 = (np.zeros(len(L)) == 1),(np.zeros(len(L)) == 1) 
     while not fixed:
-        L,g_rates = update(L,g_rates,dist_key,*func_args)
-        L= recenter(L,g_rates,K)
-        wt_ind = np.where(g_rates==r)[0][0]
-        fix_bools = L[:,wt_ind] < int(thresh*K)
-        #est_bools = L[:,2] > int(1/(r*alpha))
-        fixed= all(fix_bools)
-
-        #fix_times  = [max(i,time) for i, time in zip((fix_bools^fb_1)*t,fix_times)]
-            #est_times  = [max(i,time) for i, time in zip((est_bools^eb_1)*t,est_times)]
-        fb_1= fix_bools
-        t+=1
-    return L,g_rates
-
-      
-
         
+        #number of demes with a non empty particle (+2)
+        n_demes = np.where(L[:,0]!=K)[0][-1] +2
+
+        #pick adjacent demes tobe swapped, pick demes for duplication and mutation
+        ind_1 = np.random.randint(0, n_demes)
+        if (np.random.random() < .5 and ind_1 != 0) or ind_1 == n_demes - 1:
+            ind_2 = ind_1 - 1
+        else:
+            ind_2 = ind_1 + 1
+        neighb = np.array([ind_1, ind_2])
+        dup_deme, mut_deme = np.random.randint(0,n_demes,2)
+
+
+        #dmigration: pick two cells from each of the selected demes, and swap them
+        for i in range(2):
+            picks[i] = choice(alleles, L[neighb][i]/K)
+
+        for inds in [[0,1],[1,0]]:
+            L[neighb[inds[0]],picks[inds[0]]] -= 1
+            L[neighb[inds[0]],picks[inds[1]]] += 1
+
+
+        #duplication: pick two cells from the selected deme and echange first with copy of second according to
+        #3 probability matrix
+        for i in range(2,4):
+            picks[i] = choice(alleles,L[dup_deme]/K)
+
+        if P[picks[2],picks[3]] > np.random.random():
+            L[dup_deme,picks[2]] += 1
+            L[dup_deme,picks[3]] -= 1
+
+
+
+        ##mutation
+        mut_deme = np.random.randint(n_demes)
+        picks[4] = choice(alleles,L[mut_deme]/K)
+        #picks.append(choice(alleles,L[mut_deme]/K))
+        if (mu>np.random.random()) and( picks[4]>0):
+            #3 only particles that are not empty spaces and are not the 'peak' in the landscape strucutre can mutate
+            #if picks[4] != n_allele and picks[4] != 0:
+                ## mutate cell and fromat in terms of cell counts i.e. [empty cell count,...,chosen cell count]
+
+            ##remove original cell and add mutated cell to cell counts
+
+            s_new = np.random.normal(r*alpha**picks[4],.001)
+            g_rates = np.sort(np.append(g_rates,np.asarray(s_new)))
+            s_pos = np.where(g_rates==s_new)[0][0]
+            #print(s_pos)
+            L = np.concatenate((L[:,:(s_pos)].T, np.expand_dims(np.zeros(len(L),dtype=np.dtype( np.int64)),0), L[:,(s_pos):].T)).T
+            #L = np.concatenate((L[:,:(s_pos)].T,np.expand_dims(np.zeros(len(L)).astype(int),0),L[:,(s_pos):].T)).T 
+
+
+            n_allele = len(g_rates)-1
+
+            P = np.ones((n_allele+1,n_allele+1))
+
+            P[0,:] = 1 - g_rates
+            alleles = np.arange(n_allele+1)
+            L_empty = np.array([K]+[0]*n_allele)
+            L[mut_deme,picks[4]] -=1
+            L[mut_deme,s_pos] +=1
+
+        ##track how many demes are to be omitted
+
+        non_empty = np.sum(L,axis=0)!=0
+        L = L[:,non_empty]
+        L_empty = L_empty[non_empty]
+        g_rates = g_rates[non_empty]
+        
+
+        while L[0,0]<1:
+            L=L[1:,:]
+            L=np.append(L,np.expand_dims(L_empty,0),axis=0)
+      
+            
+        if len(g_rates)>2 ==True and not muts_check:
+            ## record time
+            arise_time = t
+            muts_check = True
+        if not len(g_rates)>2:
+            muts_check = False
+            arise_time = 0
+
+        ## check if fixed
+        n_demes = np.where(L[:,0]!=K)[0][-1] +2
+        wt_ind = np.where(g_rates==r)[0][0]
+        #fix_bools = L[:(n_demes-2),wt_ind] < np.asarray(thresh*np.sum(L[:(n_demes-2),1:],axis=1),dtype=np.dtype('int64'))
+        fixed = np.all((L[L[:,0]!=K,wt_ind])/(K-L[L[:,0]!=K,0]) < thresh)
+        t+=1
+        #L_history = np.concatenate((L_history, np.expand_dims(L,0)),axis=0)
+        #L_history[t] = L
+    return L,g_rates,t,arise_time, 
+
+
+## run simulation until a fixation event occurs (fixation to some threshold 'thresh')
+
+
+
+
+
+#Run the automaton
+#Implements cell division. The division rates are based on the experimental data
+
+
+    

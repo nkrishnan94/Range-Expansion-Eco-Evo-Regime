@@ -1,219 +1,256 @@
 import numpy as np
-from numpy import gradient as grad
+from numpy.random import choice
+
+import random
+import matplotlib.pyplot as plt
 from scipy.integrate import odeint
-import scipy.integrate as integrate
-from scipy.interpolate import interp1d
+import glob
+import os
+
+import numpy as np
+from numpy.random import choice
+import random
+from scipy.integrate import odeint
 
 
-
-##
+##standing wave solution of Fisher wave
 def standing_wave(y0,x,D,rw):
-    u = y0[0]
-    z = y0[1]
-    dudx = z
-    dzdx =(-2*((rw*D)**.5)*dudx -u*rw*(1-u))/D
-    return [dudx,dzdx]
-
-###'simplest' cases
-def simple_fisher(u,t,D, r,dt):
-    ##classic 1D fisher equation with diffusion constant D, growth rate r, population density u 
-    ### population density u  is scaled by carrying capacity
-    dudt = D*grad(grad(u,dt),dt) + r* u*(1-u)
-    return dudt
-
-
-def surf_prob(y0,x,rw,rm,D,bfunc):
-    u = y0[0]
-    z = y0[1]
+    w = y0[0]      ##initial value for wave profile at x =0, i.e. w(x=0)
+    z = y0[1]      ##initial value for rate of change of profile w.r.t. position x , at x=0 i.e. dw/dx(x=0)
+    dwdx = z
+    dzdx =(-2*((rw*D)**.5)*dwdx -w*rw*(1-w))/D
     
+    return [dwdx,dzdx]
+
+
+
+
+def fit_dist(r,alpha,dist_key):
+    dist_dict = {'exponential':np.random.exponential,
+                 'gamma':np.random.gamma,
+                 'normal':np.random.normal}
+    func = dist_dict[dist_key]
+    s_bar  = r*func(alpha)
+    return s_bar
+
+##standing wave solution of Fisher wave
+def standing_wave(y0,x,D,rw):
+    w = y0[0]      ##initial value for wave profile at x =0, i.e. w(x=0)
+    z = y0[1]      ##initial value for rate of change of profile w.r.t. position x , at x=0 i.e. dw/dx(x=0)
+    dwdx = z
+    dzdx =(-2*((rw*D)**.5)*dwdx -w*rw*(1-w))/D
     
-    
-    dudx = z
-    dzdx =(-(2*((D*rw)**.5))*dudx+ u*(rm)*(1-bfunc(x))-u**2)/D
-
-    return [dudx,dzdx]
+    return [dwdx,dzdx]
 
 
+###given a list of demes (indexes), pick two neighobiring ones at random
+def rand_neighbors(demes):
+    ind_1 = np.random.choice(demes)
+    left = demes[:ind_1][-1:]
+    right = demes[ind_1:][1:2]
+    neighb = np.append(left,right).flatten()
+    ind_2=choice(neighb)
+    neigh = [ind_1,ind_2]
+    neigh.sort()
+    return np.array(neigh)
 
-def surf_prob_solve(b,rw,rm,D, du0 ):
-    bfunc = interp1d(range(len(b)),b, bounds_error=False, fill_value="extrapolate")
-    x = np.linspace(0,len(b)-1,len(b))
-    s =odeint(surf_prob,[0,du0],x,args = (rw,rm,D,bfunc))
-    return s
+## covert a list of cell counts for each particle type to an array of 
+#all particles represented with their type represented by an itenged
+def counts_to_cells(counts,n_allele):
+    cells = np.unique(cells,return_counts=True)
+    return cells
 
-
-
-
-
-    ##functions for modified Croze et al. chemotaxis equations, with stochastic growth 
-
-
-#scaled diffusion constant as a function of agar concentration
-def M_A(c,c_0,c_1,R_div):
-    
-    M = (1+np.exp((c-c_1)/c_0))**-1
-    M/R_div
-    return M
-
-#scaled advection constant as a function of agar concentration
-def X_A(c,c_0,c_1,I):
-    
-    X = I*((np.exp((c-c_1)/c_0))*((1+np.exp((c-c_1)/c_0))**-2))
-    return X
-
-
-#####mean cell growth for all cells at each position determined by random number from binomial distribution 
-###centered around birth/death probabilities and size as cell number at give position
-###whole numbers of cells determined from cell density wrt position scaled CC - the reciprocal of which
-### is density corresponding to one cell
-def cell_growth(b0,birth,death, CC):
-    pop_arr = np.round((np.array(b0)*CC)).astype(int)
-    b_rate = birth/(birth+death)
-    births = np.random.binomial(pop_arr,b_rate)*(birth+death)
-    deaths = np.random.binomial(pop_arr,1-b_rate)*(birth+death)
-    return (births-deaths)/CC
-    
-#####mean cell growth for all cells at each position determined by random number from binomial distribution 
-###centered around mutation rate and size as cell number at give position. pop size determined as for cell growth func    
-def cell_mut(b0,mut_rate,CC):
-    pop_arr = (np.array(b0)*CC).astype(int)
-    muts = np.random.binomial(pop_arr,mut_rate)
-
-    return muts/CC
-
-
-
-def model_sde_5mut(z,t,R,R_div,c,c_0,c_1,delta,I,k_x,k_s,N,H,f,mu):
-    ##wt, mutant populations, and substrate given as one length 4*R array due to odeint constraints
-    ind =R*R_div
-    b = z[0:ind]
-    bm = z[ind:2*ind]
-    bm2 = z[2*ind:3*ind]
-    bm3 = z[3*ind:4*ind]
-    bm4 = z[5*ind:6*ind]
-    bm5 = z[6*ind:7*ind]
-    s = z[7*ind:]
-    
-    ##compact support heaviside function height
-    CC = (3.5*10**8 ) 
-    
-    
-    dbdt = M_A(c,c_0,c_1,R_div)*grad(grad(b)) -delta*X_A(c,c_0,c_1,I)* grad(b *(k_x/(s+k_x)**2)*grad(s))+ cell_growth(b,rw*(s/(k_s+s)),rw*(b+bm+bm2+bm3+bm4+bm5),CC) - cell_mut(b,mu,CC)
-    dbmdt = M_A(c,c_0,c_1,R_div)*grad(grad(bm)) -delta*X_A(c,c_0,c_1,I)* grad(bm *(k_x/(s+k_x)**2)*grad(s))+cell_growth(bm,rw*a*(s/(k_s+s)),rw*a*(b+bm+bm2+bm3+bm4+bm5),CC) + cell_mut(b,mu,CC) - cell_mut(bm,mu,CC)
-    dbm2dt = M_A(c,c_0,c_1,R_div)*grad(grad(bm2)) -delta*X_A(c,c_0,c_1,I)* grad(bm2 *(k_x/(s+k_x)**2)*grad(s))+cell_growth(bm2,rw*a*a*(s/(k_s+s)),rw*a*a*(b+bm+bm2+bm3+bm4+bm5),CC) + cell_mut(bm,mu,CC)-cell_mut(bm2,mu,CC)
-    dbm3dt = M_A(c,c_0,c_1,R_div)*grad(grad(bm3)) -delta*X_A(c,c_0,c_1,I)* grad(bm3 *(k_x/(s+k_x)**2)*grad(s))+cell_growth(bm3,rw*a*a*a*(s/(k_s+s)),rw*a*a*a*(b+bm+bm2+bm3+bm4+bm5),CC) + cell_mut(bm2,mu,CC) - cell_mut(bm3,mu,CC)
-    dbm4dt = M_A(c,c_0,c_1,R_div)*grad(grad(bm4)) -delta*X_A(c,c_0,c_1,I)* grad(bm4 *(k_x/(s+k_x)**2)*grad(s))+cell_growth(bm4,rw*a*a*a*a*(s/(k_s+s)),(b+bm+bm2+bm3+bm4+bm5)*a*a*a*a*rw,CC) + cell_mut(bm3,mu,CC) -cell_mut(bm4,mu,CC)
-    dbm5dt = M_A(c,c_0,c_1,R_div)*grad(grad(bm5)) -delta*X_A(c,c_0,c_1,I)* grad(bm5 *(k_x/(s+k_x)**2)*grad(s))+cell_growth(bm5,rw*a*a*a*a*a*(s/(k_s+s)),(b+bm+bm2+bm3+bm4+bm5)*rw*a*a*a*a*a,CC) + cell_mut(bm4,mu,CC) -cell_mut(bm5,mu,CC)
-                                                
-    dsdt = N*grad(grad(s)) - H*(s/(s+k_s))*(rw*b+rw*a*bm+rw*a*a*bm2)+rw*a*a*a*bm3+rw*a*a*a*a*f*bm4+rw*a*a*a*a*a*bm5
-    
-    dzdt = [dbdt,dbmdt,dbm2dt,dbm3dt,dbm4dt,dbm5dt,dsdt]
-    return np.concatenate(dzdt)
-
-### Deterministic Chemotaxis per Croze et al. with stochastic growth
-def model_sde_2mut(z,t,R,R_div,c,c_0,c_1,delta,I,k_x,k_s,N,H,rw,a,mu,K):
-    ##wt, mutant populations, and substrate given as one length 4*R array due to odeint constraints
-    z[z<0] = 0
-    ind =R*R_div
-    b = z[0:ind]
-    bm = z[ind:2*ind]
-    bm2 = z[2*ind:3*ind]
-    s = z[3*ind:]
-    
-    ##compact support heaviside function height
-    CC = (3.5*10**8 ) 
-    
-    
-    dbdt = M_A(c,c_0,c_1,R_div)*grad(grad(b)) -delta*X_A(c,c_0,c_1,I)* grad(b *(k_x/(s+k_x)**2)*grad(s))+ b*rw*((s/(k_s+s)) -b-bm-bm2) -b*mu +np.random.normal(np.zeros(len(b)),abs(b*abs(((2*b*(1-b-bm-bm2))/K))**.5))
-
-
-    dbmdt = M_A(c,c_0,c_1,R_div)*grad(grad(bm)) -delta*X_A(c,c_0,c_1,I)* grad(bm *(k_x/(s+k_x)**2)*grad(s))+bm*rw*a*((s/(k_s+s)) -b-bm-bm2) +b*mu-bm*mu + np.random.normal(np.zeros(len(bm)),abs(bm*abs(((2*bm*(1-b-bm-bm2))/K))**.5))
-    dbm2dt = M_A(c,c_0,c_1,R_div)*grad(grad(bm2)) -delta*X_A(c,c_0,c_1,I)* grad(bm2 *(k_x/(s+k_x)**2)*grad(s))+bm*rw*a*a*((s/(k_s+s)) -b-bm-bm2) +bm*mu  + np.random.normal(np.zeros(len(bm2)),abs(bm2*abs(((2*bm2*(1-b-bm-bm2))/K))**.5))
-                                                
-    dsdt = N*grad(grad(s)) - H*(s/(s+k_s))*(rw*b+rw*a**bm+rw*a*a*bm2)
-    
-    dzdt = [dbdt,dbmdt,dbm2dt,dsdt]
-    return np.concatenate(dzdt)
-
-
-def model_sde_1mut(z,t,R,R_div,c,c_0,c_1,delta,I,k_x,k_s,N,H,rw,a,mu,K):
-    ##wt, mutant populations, and substrate given as one length 4*R array due to odeint constraints
-    z[z<0] = 0
-    ind =(R-1)*R_div+1
-    b = z[0:ind]
-    bm = z[ind:2*ind]
-    s = z[2*ind:]
-    
-    ##compact support heaviside function height
-    CC = (3.5*10**8 ) 
-    
-    
-    dbdt = M_A(c,c_0,c_1,R_div)*grad(grad(b)) -delta*X_A(c,c_0,c_1,I)* grad(b *(k_x/(s+k_x)**2)*grad(s))+ b*rw*((s/(k_s+s)) -b-bm) -b*mu + np.random.normal(np.zeros(len(b)),abs(b*abs(((2*b*(1-b-bm))/K))**.5))
-
-    dbmdt = M_A(c,c_0,c_1,R_div)*grad(grad(bm)) -delta*X_A(c,c_0,c_1,I)* grad(bm *(k_x/(s+k_x)**2)*grad(s))+bm*rw*a*((s/(k_s+s)) -b-bm) +b*mu-bm*mu + np.random.normal(np.zeros(len(bm)),abs(b*abs(((2*bm*(1-b-bm))/K))**.5))
-                                                
-    dsdt = N*grad(grad(s)) - H*(s/(s+k_s))*(rw*b+a*rw*bm)
-    
-    dzdt = [dbdt,dbmdt,dsdt]
-    return np.concatenate(dzdt)
-
-
-####functions to solve above sde
-
-
-
-def sde_model_solve_5mut(R, R_div,c,c_0,c_1,delta,I,K_x, K_s,N, H,rw,a,mu,b0,s0,t):
-    N/R_div
-
-    bm0,bm20,bm30,bm40,bm50 = 5*[np.zeros((R-1)*R_div+1)]
-    z  = np.concatenate([b0,bm0,bm20,bm30,bm40,bm50,s0])
-    results = []
-    results.append(z)
-    dt = t[1]-t[0]
-    for i in t:
-        results.append(results[-1] +dt*model_sde_2mut(results[-1], 0,R,R_div,c,c_0,c_1,delta,I,K_x,K_s,N,H,rw,a,mu))
-        results[-1][results[-1]< 0]= 0  
-        
-    return results
-
-
-
-def sde_model_solve_2mut(R, R_div,c,c_0,c_1,delta,I,K_x, K_s,N, H,rw,a,mu,b0,s0,t,L_f,K):
-
-    N/R_div
-
-    bm0,bm20 = 2*[np.zeros((R-1)*R_div+1)]
-    z  = np.concatenate([b0,bm0,bm20,s0])
-    results = []
-    results.append(z)
-    dt = t[1]-t[0]
-
-    for i in t:
-        btot = results[-1][0:R]+results[-1][R:2*R]+results[-1][2*R:3*R]
-        if len(btot[btot*K>1])< L_f:
-            mut_rate = 0
+## covert an array of all cells and their type to a list of counts for each cell type 
+def cells_to_counts(cell_types,g_rates):
+    g_r = np.unique(cell_types,return_counts=True)[0]
+    raw_counts = np.unique(cell_types,return_counts=True)[1]
+    cell_counts = []
+    for i in g_rates:
+        if any(g_r == i):
+            cell_counts.append(raw_counts[np.where(g_r == i)[0][0]])
         else:
-            mut_rate = mu
+            cell_counts.append(0)
+    cell_counts = np.array(cell_counts)
 
-        results.append(results[-1] +dt*model_sde_2mut(results[-1], 0,R,R_div,c,c_0,c_1,delta,I,K_x,K_s,N,H,rw,a,mut_rate,K))
-        results[-1][results[-1]< 0]= 0  
+    return cell_counts
+    
+    
+## from a list 2d array of the cell list from two neighboring demes
+##pick two cells to be swapped at random and return resulting cell list
+def migration(cell_counts,g_rates,K,r):
+    picks = []
+    cell_types = [] 
+    for i in [0,1]:
+        pick_ind=choice(np.arange(K))
+        picks.append(np.arange(K) == pick_ind)
+        cell_types.append(np.repeat( g_rates, cell_counts[i].astype(int)))
+    picks = np.array(picks)
+    keep =  ~np.array(picks)
+    
+
+
+    cell_types[0]= np.append(cell_types[0][keep[0]], [cell_types[1][picks[1]]])
+    cell_types[1]= np.append(cell_types[1][keep[1]], [cell_types[0][picks[0]]])
+    return np.array(cell_types)
+
+## from the cell list from the chosen d0eme
+##pick *-\\\\\\\\\\\\\\\
+#wo cells and replace one with a duplicate of the other according
+##to transition matrix
+def duplication(cell_counts,g_rates,K,r):
+    pick_ind=choice(np.arange(K),2,replace= False)
+    cell_types = np.repeat(g_rates, cell_counts.astype(int))
+    picks = np.array([np.arange(K) == pick_ind[i] for i in [0,1]])
+    r= np.random.random()
+    P=prob_mat(g_rates)
+    #print(cell_types)
+    if P[tuple([np.where(cell_types[ind] == g_rates)[0] for ind in pick_ind])]> r:
+        cell_types[pick_ind[1]] =cell_types[pick_ind[0]]
+    return cell_types
+    
+ ## from the cell list from the chosen deme
+##pick a cell and mutate it with probability according to mutation rate
+def mutation(mu,alpha,dist_key, cell_counts,g_rates,K,r):
+
+    cell_types = np.repeat(g_rates,cell_counts.astype(int))
+    pick_ind=choice(np.arange(K),np.ones(K)/K)
+    p= np.random.random()
+    s_pos=0
+    if mu>p:
+        if cell_types[pick_ind] == r :
+            s_new = fit_dist(r,alpha,dist_key)
+            cell_types[pick_ind] = s_new
+            g_rates = np.sort(np.append(g_rates,[cell_types[pick_ind]]))
+            s_pos = np.where(g_rates==s_new)[0][0]
+    return cell_types, g_rates,s_pos
+
+## perform stepping stone alogrithm (migration, duplication, mutation) for each step
+## and return new simulation box, recenter
+
+def recenter(L, g_rates, K):
+    shift = 0
+    L_empty= np.append([K],np.zeros(len(g_rates)-1,dtype=float))
+    while L[0,0]<int(.02*K):
+        L=L[1:,:]
+        shift+=1
+    for i in range(shift):
+        L=np.append(L,[L_empty],axis=0)
+    return L
+
+
+def update(L,g_rates,dist_key,K,r,alpha,mu):
+    #demes = np.arange(len(L))
+    L_tip = np.where(L[:,0]!=K)[0][-1]
+    demes = np.arange(L_tip+2)
+    #migration
+    neighbors = rand_neighbors(demes)
+    demes = np.arange(L_tip+2)
+    #migration
+    neighb = rand_neighbors(demes)
+
+    L[neighb]= migration(L[neighb],n_allele,K)
+
+
+    #duplication
+    dup_deme = choice(demes,np.ones(len(demes))/len(demes))
+    L[dup_deme] = duplication(L[dup_deme],K,P,n_allele)
+
+    ##mutation
+    mut_deme = choice(demes)
+    cells, g_rates,s_pos = mutation(mu,alpha,dist_key, L[mut_deme],g_rates,K,r)
+    counts = cells_to_counts(cells,g_rates)
+    for i in range(len(g_rates)-len(L[0])):
+        L = np.append(np.append(L[:,:(s_pos)],
+                                np.vstack(np.zeros(len(L))),axis=1),L[:,(s_pos):],axis=1)
+        #print(counts)
+        #print(L[mut_deme])
+        #print(L)
+    L[mut_deme]=counts
         
-    return results
+    return L,g_rates
 
 
-def sde_model_solve_1mut(R, R_div,c,c_0,c_1,delta,I,K_x, K_s,N, H,rw,a,mu,b0,s0,t,L_f,K):
-    N/R_div
+def initialize(K,r,alpha,mu):
+    stand = odeint(standing_wave,[1,-(2*2**.5)/K],np.arange(70),args=(2*2**.5,1))[:,0]
+    w_0 = (K*stand).astype(int)
+    w_0 = w_0[w_0>1]
+    L = np.vstack(((K-w_0),w_0)).T
+    g_rates = np.array([0,r])
 
-    bm0 = np.zeros((R-1)*R_div+1)
-    z  = np.concatenate([b0,bm0,s0])
-    results = []
-    results.append(z)
-    dt = t[1]-t[0]
-    for i in t:
-        btot = results[-1][0:R]+results[-1][R:2*R]+results[-1][2*R:3*R]
+    ##initialize array
+    L_empty= np.append([K],np.zeros(len(g_rates)-1))
 
-        results.append(results[-1] +dt*model_sde_1mut(results[-1], 0,R,R_div,c,c_0,c_1,delta,I,K_x,K_s,N,H,rw,a,mu,K))
-        results[-1][results[-1]< 0]= 0
+    for i in range(70):
+        L= np.append(L,[L_empty],axis=0)
+    return L.astype(int), g_rates
+
+def prob_mat(g_rates):
+    P = np.ones((len(g_rates),len(g_rates)))
+    P[0,:] = 1-g_rates
+    return P 
+
+def prune(L,g_rates):
+    
+    full_bools = np.where(np.sum(L,axis=0)!=0)[0][-1]
+    L=L[:,:full_bools]
+    g_rates = g_rates[:full_bools]
+    return L,g_rates
+
+## run one dimensional stepping stone for a given number of possible beneficil mutations, and generations   
+def run_stepping_stone(n_gen,K,r,alpha,mu,dist_key = 'exponential'):
+    func_args = [K,r,alpha,mu]
+    ##initialize probability matrix
+    c = 1
+    move=10
+    L, g_rates = initialize(*func_args)
+    L_history=[L]
+    #begin evolution
+    count = 0
+    for t in range(n_gen):
+        for dt in range(K):
+            L,g_rates = update(L,g_rates,dist_key,*func_args)
+            
+            L= recenter(L,g_rates,K)
         
-    return results
+        #L,g_rates =prune(L,g_rates)
+        L_history.append(L)
+        
 
+        count+=1
+    return L_history, g_rates
+
+
+## run a two allele 1d stepping stone simulation, recording mutant establishment and fixation along simulation box
+def fix_time(K,r,alpha,mu,thresh,dist_key , track):
+    func_args = [K,r,alpha,mu]
+    ##initialize probability matrix
+    c = 1
+    move=10
+    L, g_rates = initialize(*func_args)
+    L_history=[L]
+    #begin evolution
+    count = 0
+    #begin evolution
+    fixed=False
+    t = 0
+
+    fix_times = np.zeros(len(L))
+    est_times = np.zeros(len(L))
+    fb_1, eb_1 = (np.zeros(len(L)) == 1),(np.zeros(len(L)) == 1) 
+    while not fixed:
+        L,g_rates = update(L,g_rates,dist_key,*func_args)
+        L= recenter(L,g_rates,K)
+        wt_ind = np.where(g_rates==r)[0][0]
+        fix_bools = L[:,wt_ind] < int(thresh*K)
+        #est_bools = L[:,2] > int(1/(r*alpha))
+        fixed= all(fix_bools)
+
+        fix_times  = [max(i,time) for i, time in zip((fix_bools^fb_1)*t,fix_times)]
+            #est_times  = [max(i,time) for i, time in zip((est_bools^eb_1)*t,est_times)]
+        fb_1= fix_bools
+        t+=1
+    return L,fix_times,g
+
+      
+
+        
