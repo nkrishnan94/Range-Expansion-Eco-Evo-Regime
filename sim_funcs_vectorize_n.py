@@ -33,9 +33,10 @@ def initialize(K,n_allele,mu):
 
     ##array strucutre of an empty deme to be added on as needed 
     L_empty= np.append([K],np.zeros(n_allele,dtype=int))
+    L_diff=200-len(w_0)
 
     ## add on some number of empty demes
-    for i in range(500):
+    for i in range(L_diff):
         L= np.append(L,[L_empty],axis=0)
         
     return L.astype(int), L_empty
@@ -63,20 +64,25 @@ def update(L, ## population
     g_rates,
     r,
     alpha,
-    mu): ##mutation rate
+    mu,kts): ##mutation rate
         #L_tip = np.where(L[:,0]!=K)[0][-1]
     n_allele = len(g_rates) -1
     alleles=np.arange(len(g_rates))
-    rands = np.random.random((3,K))
+    
     n_demes = np.where(L[:,0]!=K)[0][-1] +2
-    deme_seeds = np.random.randint(0,n_demes,(3,K))
+    N_dt =kts
+
+
+    rands = np.random.random((3,N_dt))
+
+    deme_seeds = np.random.randint(0,n_demes,(3,N_dt))
     neighbs = np.append(np.expand_dims(deme_seeds[0,:],0),
            np.expand_dims((((rands[0,:]<.5) & (deme_seeds[0,:]) !=0) | (deme_seeds[0,:] == (n_demes -1)) *1) *-2+1 +deme_seeds[0,:],0),axis=0).T
 
     neighb_counts = np.bincount(neighbs.flatten(),
                                 #np.max(neighbs)
                                )
-    mig_picks = np.zeros((K,2),dtype=np.int64)
+    mig_picks = np.zeros((N_dt,2),dtype=np.int64)
     cnt = 0
     for i in np.unique(neighbs.flatten()):
         to_ind = np.random.choice(np.repeat(alleles,L[i]),neighb_counts[i],replace=False)
@@ -98,7 +104,7 @@ def update(L, ## population
     dup_counts = np.bincount(deme_seeds[1,:],
                                #np.max(deme_seeds[1,:])
                               )
-    dup_picks = np.zeros((K,2),dtype=np.int64)
+    dup_picks = np.zeros((N_dt,2),dtype=np.int64)
 
     for i in np.unique(deme_seeds[1,:].flatten()):
         dup_picks[np.where(deme_seeds[1,:]==i)] = np.random.choice(np.repeat(alleles,L[i]),(dup_counts[i],2),replace=False)
@@ -112,7 +118,7 @@ def update(L, ## population
     mut_counts = np.bincount(deme_seeds[2,:], 
                                #np.max(deme_seeds[2,:])
                               )
-    mut_picks = np.zeros(K,dtype=np.int64)
+    mut_picks = np.zeros(N_dt,dtype=np.int64)
 
     for i in np.unique(deme_seeds[2,:].flatten()):
         mut_picks[np.where(deme_seeds[2,:]==i)] =np.random.choice(np.repeat(alleles,L[i]),(mut_counts[i]),replace=False)
@@ -120,17 +126,19 @@ def update(L, ## population
 
     mt_cnt = 0
     for i in np.unique(deme_seeds[2,:]):
+        
 
 
         to_mut = mut_picks[np.where(deme_seeds[2,:]==i)]
-        mut_bool =(to_mut != 0 ) &(g_rates[to_mut] ==r ) & (mu>rands[1,:].take(np.where(deme_seeds[2,:]==i)[0]))
-
+        mut_bool =(to_mut != 0 )  & (mu>rands[1,:].take(np.where(deme_seeds[2,:]==i)[0]))
+        
 
         ##remove original cell and add mutated cell to cell counts
-        s_new = np.random.normal(r*alpha,.001,np.sum(mut_bool))
-        if s_new.size > 0:
-            for s in s_new:
 
+        if np.sum(mut_bool)>1:
+
+            for s_0 in to_mut[mut_bool]:
+                s= np.random.normal(r*alpha**(s_0),.0001)
                 g_rates = np.sort(np.append(g_rates,np.asarray(s)))
                 s_pos = np.where(g_rates==s)[0][0]
                 #print(s_pos)
@@ -145,7 +153,7 @@ def update(L, ## population
                 P[0,:] = 1 - g_rates
                 #alleles = np.arange(n_allele+1)
                 L_empty = np.array([K]+[0]*(len(g_rates)-1))
-                L[i,1] -=1
+                L[i,s_0] -=1
                 L[i,s_pos] +=1
                 mt_cnt+=1
     #shift = 0
@@ -159,6 +167,63 @@ def update(L, ## population
 
 @njit
 def run_stepping_stone(n_gen,## nunmber of gnerations
+                K, ## population size
+                r,
+                alpha,## fitness landscape (Growthrates of each genotype (should be <<1))
+                mu,
+                L_init,prune,kts):
+    
+
+
+    ##initialize probability matrix
+    L_empty = L_init[-1]
+    L = L_init
+    g_rates = np.array([0,r])
+    n_allele = len(g_rates)-1
+    P = np.ones((n_allele+1,n_allele+1))
+    P[0,:] = 1 - g_rates
+    ## list of allele number - pre-established so array doesnt have to be regenerated
+
+    #if track:
+    #L_history = []
+    gr_hist = []
+    #    L_history = [L]
+    mut_events=0
+    scount = 0
+    for t in range(n_gen):
+        #if scount == 0:
+        #    mu_t =0
+        #else:
+        #    mu_t = mu
+        L, L_empty, g_rates, P,new_muts =update(L,L_empty,P,K,g_rates,r,alpha,mu,kts)
+        mut_events += new_muts
+        gr_hist.append(g_rates)
+        
+        if prune:
+            non_empty = np.sum(L,axis=0)!=0
+            L= L[:,non_empty]
+            L_empty = L_empty[non_empty]
+            g_rates = g_rates[non_empty]
+
+        
+        while L[0,0]<1:
+            L=L[1:,:]
+            L=np.append(L,np.expand_dims(L_empty,0),axis=0) 
+            scount+=1
+
+         
+
+    #    if track:
+        #L_history.append(L)
+        
+    #if track:
+    #    return L_history, g_rates
+    #else:
+    return  L, g_rates,mut_events,scount
+
+
+@njit
+def stepping_stone_nv(n_gen,## nunmber of gnerations
                 K, ## population size
                 r,
                 alpha,## fitness landscape (Growthrates of each genotype (should be <<1))
@@ -187,7 +252,7 @@ def run_stepping_stone(n_gen,## nunmber of gnerations
         #    mu_t =0
         #else:
         #    mu_t = mu
-        L, L_empty, g_rates, P,new_muts =update(L,L_empty,P,K,g_rates,r,alpha,mu)
+        L, L_empty, g_rates, P,new_muts =update(L,L_empty,P,1,g_rates,r,alpha,mu)
         mut_events += new_muts
         gr_hist.append(g_rates)
         
@@ -211,7 +276,7 @@ def run_stepping_stone(n_gen,## nunmber of gnerations
     #if track:
     #    return L_history, g_rates
     #else:
-    return  L, g_rates,gr_hist,scount
+    return  L, g_rates,mut_events,scount
 
 @njit
 def fix_time_spatial(K, ## population size
@@ -220,6 +285,7 @@ def fix_time_spatial(K, ## population size
                      mu,
                      L_init,
                      thresh,
+                     kts,
                      prune):  ## mutation rate
     
     
@@ -240,15 +306,14 @@ def fix_time_spatial(K, ## population size
     fixed=False
     mut_events = 0
     t = 0
-    scount = 0
-    L_i= np.copy(L_init)
+
     while not fixed:
         #if scount < 10:
         #    mu_t =0
         #    L_i = np.copy(L)
         #else:
         #    mu_t = mu
-        L, L_empty, g_rates, P,new_muts =update(L,L_empty,P,K,g_rates,r,alpha,mu)
+        L, L_empty, g_rates, P,new_muts =update(L,L_empty,P,K,g_rates,r,alpha,mu,kts)
         mut_events += new_muts
         
         if prune:
@@ -261,7 +326,7 @@ def fix_time_spatial(K, ## population size
         while L[0,0]<1:
             L=L[1:,:]
             L=np.append(L,np.expand_dims(L_empty,0),axis=0)
-            scount+=1
+      
             
         if len(g_rates)>2 ==True and not muts_check:
             ## record time
@@ -282,4 +347,4 @@ def fix_time_spatial(K, ## population size
         t+=1
 
 
-    return L, L_i, g_rates,t,arise_time, mut_events, scount
+    return L, g_rates,t,arise_time, mut_events
